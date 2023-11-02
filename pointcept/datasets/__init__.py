@@ -17,3 +17,6 @@ from .shapenet_part import ShapeNetPartDataset
 
 from .builder import build_dataset
 from .utils import point_collate_fn, collate_fn
+
+# Add by Donghyeon Lee
+from .nia_cycle1 import NiaCycle1Dataset
