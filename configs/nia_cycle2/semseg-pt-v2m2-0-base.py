@@ -55,7 +55,7 @@ scheduler = dict(
 )
 
 # dataset settings
-dataset_type = "NiaCycle1Dataset"
+dataset_type = "NiaCycle2Dataset"
 data_root = "/datasets/nia/"
 ignore_index = -1
 names = [
