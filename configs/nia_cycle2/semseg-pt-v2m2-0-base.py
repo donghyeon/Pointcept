@@ -104,7 +104,7 @@ data = dict(
     ),
     val=dict(
         type=dataset_type,
-        split="val",
+        split="valid",
         data_root=data_root,
         transform=[
             # dict(type="PointClip", point_cloud_range=(-51.2, -51.2, -4, 51.2, 51.2, 2.4)),
