@@ -10,7 +10,7 @@ RUN pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1
 
 RUN pip install h5py pyyaml sharedarray tensorboard tensorboardx yapf==0.40.1 addict einops scipy plyfile termcolor timm open3d polars
 
-RUN pip install torch-cluster torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.13.0+cu117.html
+RUN pip install --no-index torch-cluster torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.13.0+cu117.html
 
 RUN pip install torch-geometric spconv-cu117
 
