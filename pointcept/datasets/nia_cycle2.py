@@ -62,10 +62,26 @@ def split_by_ratio(sequence, ratio, random_seed=None):
     ]
 
 
+def read_lidar_pcd(lidar_path):
+    cloud = o3d.t.io.read_point_cloud(lidar_path)
+    coord = cloud.point['positions'].numpy()
+    strength = cloud.point['reflectivity'].numpy() / 255
+
+    # Filter out same points
+    unique_coord, unique_indices = np.unique(coord, return_index=True, axis=0)
+    return unique_coord, strength[unique_indices]
+
+
 def read_json(json_path):
     with open(json_path) as f:
         label = json.load(f)
     return label
+
+
+# TODO: Create segment by read_annotations and match_annotations (annotation["3d_points"] and coord)
+def read_annotations(label):
+    annotations = label["annotations"]
+    return list(map(lambda x: (x["3d_points"], x["class_id"]), annotations))
 
 
 @DATASETS.register_module()
@@ -154,9 +170,7 @@ class NiaCycle2Dataset(DefaultDataset):
         lidar_path, label_path = self.data_list[idx % len(self.data_list)]
 
         # Read lidar
-        cloud = o3d.t.io.read_point_cloud(lidar_path)
-        coord = cloud.point['positions'].numpy()
-        strength = cloud.point['reflectivity'].numpy() / 255
+        coord, strength = read_lidar_pcd(lidar_path)
 
         # Read label
         if parallel:
