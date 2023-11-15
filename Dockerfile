@@ -14,9 +14,7 @@ RUN pip install --no-index torch-cluster torch-scatter torch-sparse -f https://d
 
 RUN pip install torch-geometric spconv-cu117
 
-WORKDIR /home
-
-RUN git clone https://github.com/donghyeon/Pointcept.git
+COPY . /home/Pointcept/
 
 WORKDIR /home/Pointcept/libs/pointops
 
