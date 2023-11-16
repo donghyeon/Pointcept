@@ -8,6 +8,13 @@ class NiaDataPathExtractor:
     def __init__(
             self,
             dataset_dir="/datasets/nia/",
+            pattern=(
+                r"(?P<type>[^/]+)/"
+                r"(?P<collector>[^/]+)/"
+                r".*?"
+                r"(?P<channel>[^/]+)/"
+                r"(?P<filename>[^/]+)$"
+            )
         ) -> None:
         # Directory should have a trailing slash
         if not dataset_dir.endswith("/"):
@@ -15,25 +22,13 @@ class NiaDataPathExtractor:
         self.dataset_dir = dataset_dir
 
         # TODO: match, pair, filter, drop_nulls have to be run on the user-side
-        self.matched_df = self.match(self.pattern)
+        self.matched_df = self.match(dataset_dir + pattern)
         self.paired_df = self.pair()
         self.df = self.paired_df.drop_nulls()
     
     @property
     def paths(self) -> pl.Series:
         return pl.Series("path", map(str, Path(self.dataset_dir).rglob("*.*")))
-    
-    @property
-    def pattern(self) -> str:
-        # Define subdirectory names
-        return (
-            f"{self.dataset_dir}"
-            r"(?P<type>[^/]+)/"
-            r"(?P<collector>[^/]+)/"
-            r".*?"
-            r"(?P<channel>[^/]+)/"
-            r"(?P<filename>[^/]+)$"
-        )
     
     def match(self, pattern: str) -> pl.DataFrame:
         # Get all file paths and match subdirectory names
