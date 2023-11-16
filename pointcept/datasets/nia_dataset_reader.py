@@ -28,9 +28,9 @@ class NiaDataPathExtractor:
         # Define subdirectory names
         return (
             f"{self.dataset_dir}"
-            r"(?P<volume>[^/]+)/"
+            r"(?P<type>[^/]+)/"
+            r"(?P<collector>[^/]+)/"
             r".*?"
-            r"(?P<scene>[^/]+)/"
             r"(?P<channel>[^/]+)/"
             r"(?P<filename>[^/]+)$"
         )
