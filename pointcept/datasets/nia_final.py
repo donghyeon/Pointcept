@@ -205,8 +205,9 @@ class NiaFinalDataset(DefaultDataset):
     def get_learning_map(ignore_index):
         learning_map = {
             ignore_index: ignore_index,
-            0: 2,  # "Two-wheel Vehicle",
+            # 0: 2,  # "Two-wheel Vehicle",  # Class index error fixed in final data
             1: 3,  # "Pedestrian"
+            2: 2,  # "Two-wheel Vehicle",
             3: 0,  # "Car"
             8: 1,  # "Truck/Bus"
             10: 7,  # "Traffic Light"
