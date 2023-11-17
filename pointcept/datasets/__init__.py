@@ -21,3 +21,4 @@ from .utils import point_collate_fn, collate_fn
 # Add by Donghyeon Lee
 from .nia_cycle1 import NiaCycle1Dataset
 from .nia_cycle2 import NiaCycle2Dataset
+from .nia_final import NiaFinalDataset

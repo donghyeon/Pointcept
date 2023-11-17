@@ -85,7 +85,7 @@ def read_annotations(label):
 
 
 @DATASETS.register_module()
-class NiaCycle2Dataset(DefaultDataset):
+class NiaFinalDataset(DefaultDataset):
     def __init__(
         self,
         split="train",
@@ -102,16 +102,15 @@ class NiaCycle2Dataset(DefaultDataset):
             NiaDataPathExtractor(
                 dataset_dir=data_root,
                 pattern=(
-                    f"{data_root}"
-                    r"(?P<volume>[^/]+)/"
+                    r"(?P<type>[^/]+)/"
+                    r"(?P<collector>[^/]+)/"
                     r".*?"
-                    r"(?P<scene>[^/]+)/"
                     r"(?P<channel>[^/]+)/"
                     r"(?P<filename>[^/]+)$"
                 ),
             ),
             DataFrameSplitter(
-                groups=["channel", "volume", "code_1", "code_2", "timeslot", "weather"],
+                groups=["channel", "collector", "code_1", "code_2", "timeslot", "weather"],
                 splits=["train", "valid", "test"],
                 ratios=[8, 1, 1],
                 seed=231111,
