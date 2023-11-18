@@ -3,9 +3,20 @@ _base_ = ["../_base_/default_runtime.py"]
 # misc custom setting
 num_worker = 8
 batch_size = 4  # bs: total bs in all gpus
+batch_size_val = 4
 mix_prob = 0.8
 empty_cache = False
 enable_amp = True
+
+# hook
+hooks = [
+    dict(type="CheckpointLoader"),
+    dict(type="IterationTimer", warmup_iter=2),
+    dict(type="InformationWriter"),
+    dict(type="SemSegEvaluatorPerSteps", eval_steps=10),
+    dict(type="CheckpointSaver", save_freq=None),
+    dict(type="PreciseEvaluator", test_last=False),
+]
 
 # model settings
 model = dict(
@@ -42,8 +53,8 @@ model = dict(
 )
 
 # scheduler settings
-epoch = 5
-eval_epoch = 5
+epoch = 10
+eval_epoch = 10
 optimizer = dict(type="AdamW", lr=0.002, weight_decay=0.005)
 scheduler = dict(
     type="OneCycleLR",
