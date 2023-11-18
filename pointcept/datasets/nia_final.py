@@ -67,8 +67,16 @@ def read_lidar_pcd(lidar_path):
     cloud = o3d.t.io.read_point_cloud(lidar_path)
     # cloud = cloud.remove_duplicated_points()[0]
 
-    coord = cloud.point['positions'].numpy()
-    strength = cloud.point['reflectivity'].numpy() / 255
+    feature_keys: list[str] = dir(cloud.point)
+    coord = cloud.point["positions"].numpy()
+
+    if "reflectivity" in feature_keys:
+        strength_key = "refletivity"
+    elif "intensity" in feature_keys:
+        strength_key = "intensity"
+    else:
+        raise Exception(f"No strength key in {lidar_path}")
+    strength = cloud.point[strength_key].numpy() / 255
     # return coord, strength
 
     # Filter out same points
