@@ -1,5 +1,6 @@
 import os
 import shutil
+from collections import OrderedDict
 
 import numpy as np
 import torch
@@ -17,18 +18,11 @@ from .builder import HOOKS
 @HOOKS.register_module()
 class SemSegEvaluatorPerSteps(HookBase):
     def __init__(self, eval_steps) -> None:
-        self.curr_iter = 0
         self.eval_steps = eval_steps
-    
-    def before_train(self):
-        self.curr_iter = self.trainer.start_epoch * len(self.trainer.train_loader)
-    
-    def before_step(self):
-        self.curr_iter += 1
     
     def after_step(self):
         if self.trainer.cfg.evaluate:
-            if self.curr_iter % self.eval_steps == 0:
+            if self.trainer.comm_info["step"] % self.eval_steps == 0:
                 self.eval()
                 self.trainer.model.train()  # Change model to training mode after evaluation
 
@@ -111,10 +105,10 @@ class SemSegEvaluatorPerSteps(HookBase):
             )
 
         if self.trainer.writer is not None:
-            self.trainer.writer.add_scalar("val/loss", loss_avg, self.curr_iter)
-            self.trainer.writer.add_scalar("val/mIoU", m_iou, self.curr_iter)
-            self.trainer.writer.add_scalar("val/mAcc", m_acc, self.curr_iter)
-            self.trainer.writer.add_scalar("val/allAcc", all_acc, self.curr_iter)
+            self.trainer.writer.add_scalar("val/loss", loss_avg, self.trainer.comm_info["step"])
+            self.trainer.writer.add_scalar("val/mIoU", m_iou, self.trainer.comm_info["step"])
+            self.trainer.writer.add_scalar("val/mAcc", m_acc, self.trainer.comm_info["step"])
+            self.trainer.writer.add_scalar("val/allAcc", all_acc, self.trainer.comm_info["step"])
         self.trainer.logger.info("<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<")
         self.trainer.comm_info["current_metric_value"] = m_iou  # save for saver
         self.trainer.comm_info["current_metric_name"] = "mIoU"  # save for saver
@@ -128,17 +122,10 @@ class SemSegEvaluatorPerSteps(HookBase):
 @HOOKS.register_module()
 class CheckpointSaverPerSteps(HookBase):
     def __init__(self, save_steps):
-        self.curr_iter = 0
         self.save_steps = save_steps
-    
-    def before_train(self):
-        self.curr_iter = self.trainer.start_epoch * len(self.trainer.train_loader)
-    
-    def before_step(self):
-        self.curr_iter += 1
 
     def after_step(self):
-        if self.curr_iter % self.save_steps == 0:
+        if self.trainer.comm_info["step"] % self.save_steps == 0:
             if is_main_process():
                 is_best = False
                 if self.trainer.cfg.evaluate:
@@ -164,8 +151,12 @@ class CheckpointSaverPerSteps(HookBase):
                 self.trainer.logger.info("Saving checkpoint to: " + filename)
                 torch.save(
                     {
-                        "steps": self.curr_iter,
-                        "epoch": self.trainer.epoch + 1,
+                        "step": self.trainer.comm_info["step"],
+                        "epoch": (
+                            self.trainer.epoch + 1
+                            if self.trainer.comm_info["step"] % len(self.trainer.train_loader) == 0
+                            else self.trainer.epoch
+                        ),
                         "state_dict": self.trainer.model.state_dict(),
                         "optimizer": self.trainer.optimizer.state_dict(),
                         "scheduler": self.trainer.scheduler.state_dict(),
@@ -188,6 +179,144 @@ class CheckpointSaverPerSteps(HookBase):
                     os.path.join(
                         self.trainer.cfg.save_path,
                         "model",
-                        f"step_{self.curr_iter}.pth",
+                        f"step_{self.trainer.comm_info['step']}.pth",
                     ),
+                )
+
+
+@HOOKS.register_module()
+class CheckpointLoaderWithStep(HookBase):
+    def __init__(self, keywords="", replacement=None, strict=False):
+        self.keywords = keywords
+        self.replacement = replacement if replacement is not None else keywords
+        self.strict = strict
+        self.start_step = 0
+
+    def before_train(self):
+        self.trainer.logger.info("=> Loading checkpoint & weight ...")
+        if self.trainer.cfg.weight and os.path.isfile(self.trainer.cfg.weight):
+            self.trainer.logger.info(f"Loading weight at: {self.trainer.cfg.weight}")
+            checkpoint = torch.load(
+                self.trainer.cfg.weight,
+                map_location=lambda storage, loc: storage.cuda(),
+            )
+            self.trainer.logger.info(
+                f"Loading layer weights with keyword: {self.keywords}, "
+                f"replace keyword with: {self.replacement}"
+            )
+            weight = OrderedDict(
+                [
+                    (key.replace(self.keywords, self.replacement), value)
+                    for key, value in checkpoint["state_dict"].items()
+                    if self.keywords in key
+                ]
+            )
+            load_state_info = self.trainer.model.load_state_dict(
+                weight, strict=self.strict
+            )
+            self.trainer.logger.info(f"Missing keys: {load_state_info[0]}")
+            if self.trainer.cfg.resume:
+                self.trainer.logger.info(
+                    f"Resuming train at step: {checkpoint['step']}"
+                )
+                self.start_step = checkpoint["step"]
+                self.trainer.start_epoch = checkpoint["epoch"]
+                self.trainer.best_metric_value = checkpoint["best_metric_value"]
+                self.trainer.optimizer.load_state_dict(checkpoint["optimizer"])
+                self.trainer.scheduler.load_state_dict(checkpoint["scheduler"])
+                if self.trainer.cfg.enable_amp:
+                    self.trainer.scaler.load_state_dict(checkpoint["scaler"])
+        else:
+            self.trainer.logger.info(f"No weight found at: {self.trainer.cfg.weight}")
+        
+        self.trainer.comm_info["step"] = self.trainer.start_epoch * len(self.trainer.train_loader)
+    
+    def before_epoch(self):
+        # Skip samples to set self.trainer.comm_info["step"] to start_step
+        if self.trainer.comm_info["step"] < self.start_step:
+            it = iter(self.trainer.data_iterator)
+            self.trainer.data_iterator = it
+
+            num_skip_steps = self.start_step - self.trainer.comm_info["step"]
+            for i in range(num_skip_steps):
+                self.trainer.comm_info["step"] += 1
+
+                (self.trainer.comm_info["iter"],
+                 self.trainer.comm_info["input_dict"]) = next(it)
+                
+                info = "Skip: [{epoch}/{max_epoch}][{iter}/{max_iter}] ".format(
+                    epoch=self.trainer.epoch + 1,
+                    max_epoch=self.trainer.max_epoch,
+                    iter=self.trainer.comm_info["iter"] + 1,
+                    max_iter=len(self.trainer.train_loader),
+                )
+                self.trainer.comm_info["iter_info"] += info
+                self.trainer.logger.info(self.trainer.comm_info["iter_info"])
+                self.trainer.comm_info["iter_info"] = ""  # reset iter info
+
+
+@HOOKS.register_module()
+class InformationWriterWithStep(HookBase):
+    def __init__(self):
+        self.model_output_keys = []
+
+    def before_train(self):
+        self.trainer.comm_info["iter_info"] = ""
+        self.trainer.comm_info["step"] = self.trainer.start_epoch * len(self.trainer.train_loader)
+
+    def before_step(self):
+        self.trainer.comm_info["step"] += 1
+        # MSC pretrain do not have offset information. Comment the code for support MSC
+        # info = "Train: [{epoch}/{max_epoch}][{iter}/{max_iter}] " \
+        #        "Scan {batch_size} ({points_num}) ".format(
+        #     epoch=self.trainer.epoch + 1, max_epoch=self.trainer.max_epoch,
+        #     iter=self.trainer.comm_info["iter"], max_iter=len(self.trainer.train_loader),
+        #     batch_size=len(self.trainer.comm_info["input_dict"]["offset"]),
+        #     points_num=self.trainer.comm_info["input_dict"]["offset"][-1]
+        # )
+        info = "Train: [{epoch}/{max_epoch}][{iter}/{max_iter}] ".format(
+            epoch=self.trainer.epoch + 1,
+            max_epoch=self.trainer.max_epoch,
+            iter=self.trainer.comm_info["iter"] + 1,
+            max_iter=len(self.trainer.train_loader),
+        )
+        self.trainer.comm_info["iter_info"] += info
+
+    def after_step(self):
+        if "model_output_dict" in self.trainer.comm_info.keys():
+            model_output_dict = self.trainer.comm_info["model_output_dict"]
+            self.model_output_keys = model_output_dict.keys()
+            for key in self.model_output_keys:
+                self.trainer.storage.put_scalar(key, model_output_dict[key].item())
+
+        for key in self.model_output_keys:
+            self.trainer.comm_info["iter_info"] += "{key}: {value:.4f} ".format(
+                key=key, value=self.trainer.storage.history(key).val
+            )
+        lr = self.trainer.optimizer.state_dict()["param_groups"][0]["lr"]
+        self.trainer.comm_info["iter_info"] += "Lr: {lr:.5f}".format(lr=lr)
+        self.trainer.logger.info(self.trainer.comm_info["iter_info"])
+        self.trainer.comm_info["iter_info"] = ""  # reset iter info
+        if self.trainer.writer is not None:
+            self.trainer.writer.add_scalar("lr", lr, self.trainer.comm_info["step"])
+            for key in self.model_output_keys:
+                self.trainer.writer.add_scalar(
+                    "train_batch/" + key,
+                    self.trainer.storage.history(key).val,
+                    self.trainer.comm_info["step"],
+                )
+
+    def after_epoch(self):
+        epoch_info = "Train result: "
+        for key in self.model_output_keys:
+            epoch_info += "{key}: {value:.4f} ".format(
+                key=key, value=self.trainer.storage.history(key).avg
+            )
+        self.trainer.logger.info(epoch_info)
+        if self.trainer.writer is not None:
+            for key in self.model_output_keys:
+                self.trainer.writer.add_scalar(
+                    "train/" + key,
+                    self.trainer.storage.history(key).avg,
+                    self.trainer.epoch + 1,
                 )
