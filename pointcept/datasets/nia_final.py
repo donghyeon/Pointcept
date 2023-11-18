@@ -206,8 +206,15 @@ class NiaFinalDataset(DefaultDataset):
         segment = np.vectorize(self.learning_map.__getitem__)(segment).astype(
             np.int64
         )
-        
-        data_dict = dict(coord=coord, strength=strength, segment=segment)
+
+        # Filter out ignore_index
+        ignore_points_indices = segment != self.ignore_index
+        data_dict = dict(
+            coord=coord[ignore_points_indices],
+            strength=strength[ignore_points_indices],
+            segment=segment[ignore_points_indices],
+        )
+        # data_dict = dict(coord=coord, strength=strength, segment=segment)
         return data_dict
 
     def get_data_name(self, idx):
