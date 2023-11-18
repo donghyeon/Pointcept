@@ -10,9 +10,9 @@ enable_amp = True
 
 # hook
 hooks = [
-    dict(type="CheckpointLoader"),
+    dict(type="CheckpointLoaderWithStep"),
     dict(type="IterationTimer", warmup_iter=2),
-    dict(type="InformationWriter"),
+    dict(type="InformationWriterWithStep"),
     dict(type="SemSegEvaluatorPerSteps", eval_steps=2500),
     dict(type="CheckpointSaverPerSteps", save_steps=2500),
     dict(type="PreciseEvaluator", test_last=False),
