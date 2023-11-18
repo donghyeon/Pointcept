@@ -62,13 +62,18 @@ def split_by_ratio(sequence, ratio, random_seed=None):
     ]
 
 
+# TODO: Figure out why remove_duplicated_points() occurs segmentation fault when num_workers > 0
 def read_lidar_pcd(lidar_path):
     cloud = o3d.t.io.read_point_cloud(lidar_path)
+    # cloud = cloud.remove_duplicated_points()[0]
+
     coord = cloud.point['positions'].numpy()
     strength = cloud.point['reflectivity'].numpy() / 255
+    # return coord, strength
 
     # Filter out same points
     unique_coord, unique_indices = np.unique(coord, return_index=True, axis=0)
+
     return unique_coord, strength[unique_indices]
 
 
