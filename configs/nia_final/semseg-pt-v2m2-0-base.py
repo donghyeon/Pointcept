@@ -13,8 +13,8 @@ hooks = [
     dict(type="CheckpointLoader"),
     dict(type="IterationTimer", warmup_iter=2),
     dict(type="InformationWriter"),
-    dict(type="SemSegEvaluatorPerSteps", eval_steps=10),
-    dict(type="CheckpointSaver", save_freq=None),
+    dict(type="SemSegEvaluatorPerSteps", eval_steps=2500),
+    dict(type="CheckpointSaverPerSteps", save_steps=2500),
     dict(type="PreciseEvaluator", test_last=False),
 ]
 
@@ -53,8 +53,8 @@ model = dict(
 )
 
 # scheduler settings
-epoch = 10
-eval_epoch = 10
+epoch = 3
+eval_epoch = 3
 optimizer = dict(type="AdamW", lr=0.002, weight_decay=0.005)
 scheduler = dict(
     type="OneCycleLR",
@@ -144,7 +144,7 @@ data = dict(
                 dict(type="ToTensor"),
                 dict(
                     type="Collect",
-                    keys=("coord", "segment"),
+                    keys=("coord", "index"),
                     feat_keys=("coord", "strength"),
                 ),
             ],

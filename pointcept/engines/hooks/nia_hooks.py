@@ -1,9 +1,13 @@
+import os
+import shutil
+
 import numpy as np
 import torch
 import torch.distributed as dist
 import pointops
 
 import pointcept.utils.comm as comm
+from pointcept.utils.comm import is_main_process
 from pointcept.utils.misc import intersection_and_union_gpu
 
 from .default import HookBase
@@ -13,12 +17,18 @@ from .builder import HOOKS
 @HOOKS.register_module()
 class SemSegEvaluatorPerSteps(HookBase):
     def __init__(self, eval_steps) -> None:
-        self.eval_iterations = eval_steps
+        self.curr_iter = 0
+        self.eval_steps = eval_steps
+    
+    def before_train(self):
+        self.curr_iter = self.trainer.start_epoch * len(self.trainer.train_loader)
+    
+    def before_step(self):
+        self.curr_iter += 1
     
     def after_step(self):
         if self.trainer.cfg.evaluate:
-            current_iter = self.trainer.comm_info["iter"] + 1
-            if current_iter % self.eval_iterations == 0:
+            if self.curr_iter % self.eval_steps == 0:
                 self.eval()
                 self.trainer.model.train()  # Change model to training mode after evaluation
 
@@ -99,12 +109,12 @@ class SemSegEvaluatorPerSteps(HookBase):
                     accuracy=acc_class[i],
                 )
             )
-        current_iter = self.trainer.comm_info["iter"] + 1
+
         if self.trainer.writer is not None:
-            self.trainer.writer.add_scalar("val/loss", loss_avg, current_iter)
-            self.trainer.writer.add_scalar("val/mIoU", m_iou, current_iter)
-            self.trainer.writer.add_scalar("val/mAcc", m_acc, current_iter)
-            self.trainer.writer.add_scalar("val/allAcc", all_acc, current_iter)
+            self.trainer.writer.add_scalar("val/loss", loss_avg, self.curr_iter)
+            self.trainer.writer.add_scalar("val/mIoU", m_iou, self.curr_iter)
+            self.trainer.writer.add_scalar("val/mAcc", m_acc, self.curr_iter)
+            self.trainer.writer.add_scalar("val/allAcc", all_acc, self.curr_iter)
         self.trainer.logger.info("<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<")
         self.trainer.comm_info["current_metric_value"] = m_iou  # save for saver
         self.trainer.comm_info["current_metric_name"] = "mIoU"  # save for saver
@@ -113,3 +123,71 @@ class SemSegEvaluatorPerSteps(HookBase):
         self.trainer.logger.info(
             "Best {}: {:.4f}".format("mIoU", self.trainer.best_metric_value)
         )
+
+
+@HOOKS.register_module()
+class CheckpointSaverPerSteps(HookBase):
+    def __init__(self, save_steps):
+        self.curr_iter = 0
+        self.save_steps = save_steps
+    
+    def before_train(self):
+        self.curr_iter = self.trainer.start_epoch * len(self.trainer.train_loader)
+    
+    def before_step(self):
+        self.curr_iter += 1
+
+    def after_step(self):
+        if self.curr_iter % self.save_steps == 0:
+            if is_main_process():
+                is_best = False
+                if self.trainer.cfg.evaluate:
+                    current_metric_value = self.trainer.comm_info["current_metric_value"]
+                    current_metric_name = self.trainer.comm_info["current_metric_name"]
+                    if current_metric_value > self.trainer.best_metric_value:
+                        self.trainer.best_metric_value = current_metric_value
+                        is_best = True
+                        self.trainer.logger.info(
+                            "Best validation {} updated to: {:.4f}".format(
+                                current_metric_name, current_metric_value
+                            )
+                        )
+                    self.trainer.logger.info(
+                        "Currently Best {}: {:.4f}".format(
+                            current_metric_name, self.trainer.best_metric_value
+                        )
+                    )
+
+                filename = os.path.join(
+                    self.trainer.cfg.save_path, "model", "model_last.pth"
+                )
+                self.trainer.logger.info("Saving checkpoint to: " + filename)
+                torch.save(
+                    {
+                        "steps": self.curr_iter,
+                        "epoch": self.trainer.epoch + 1,
+                        "state_dict": self.trainer.model.state_dict(),
+                        "optimizer": self.trainer.optimizer.state_dict(),
+                        "scheduler": self.trainer.scheduler.state_dict(),
+                        "scaler": self.trainer.scaler.state_dict()
+                        if self.trainer.cfg.enable_amp
+                        else None,
+                        "best_metric_value": self.trainer.best_metric_value,
+                    },
+                    filename + ".tmp",
+                )
+                os.replace(filename + ".tmp", filename)
+                if is_best:
+                    shutil.copyfile(
+                        filename,
+                        os.path.join(self.trainer.cfg.save_path, "model", "model_best.pth"),
+                    )
+                
+                shutil.copyfile(
+                    filename,
+                    os.path.join(
+                        self.trainer.cfg.save_path,
+                        "model",
+                        f"step_{self.curr_iter}.pth",
+                    ),
+                )
