@@ -14,12 +14,14 @@ class NiaDataPathExtractor:
                 r".*?"
                 r"(?P<channel>[^/]+)/"
                 r"(?P<filename>[^/]+)$"
-            )
+            ),
+            exclude_filenames = [],
         ) -> None:
         # Directory should have a trailing slash
         if not dataset_dir.endswith("/"):
             dataset_dir += "/"
         self.dataset_dir = dataset_dir
+        self.exclude_filenames = exclude_filenames
 
         # TODO: match, pair, filter, drop_nulls have to be run on the user-side
         self.matched_df = self.match(dataset_dir + pattern)
@@ -38,6 +40,7 @@ class NiaDataPathExtractor:
             .str.extract_groups(pattern)
             .struct.unnest()
             .with_columns(paths)
+            .filter(~pl.col("filename").is_in(self.exclude_filenames))
         )
 
         # Get stem and extension from filename

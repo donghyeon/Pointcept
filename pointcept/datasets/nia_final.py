@@ -113,6 +113,7 @@ class NiaFinalDataset(DefaultDataset):
                     r"(?P<channel>[^/]+)/"
                     r"(?P<filename>[^/]+)$"
                 ),
+                exclude_filenames=["LV_B03_R01_night_clear_01091948.pcd"],  # File corrupted
             ),
             DataFrameSplitter(
                 groups=["channel", "collector", "code_1", "code_2", "timeslot", "weather"],
