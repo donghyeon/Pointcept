@@ -71,7 +71,7 @@ def read_lidar_pcd(lidar_path):
     coord = cloud.point["positions"].numpy()
 
     if "reflectivity" in feature_keys:
-        strength_key = "refletivity"
+        strength_key = "reflectivity"
     elif "intensity" in feature_keys:
         strength_key = "intensity"
     else:
