@@ -80,6 +80,10 @@ class SemSegEvaluatorPerSteps(HookBase):
                     iter=i + 1, max_iter=len(self.trainer.val_loader), loss=loss.item()
                 )
             )
+            
+            if self.trainer.cfg.empty_cache:
+                torch.cuda.empty_cache()
+
         loss_avg = self.trainer.storage.history("val_loss").avg
         intersection = self.trainer.storage.history("val_intersection").total
         union = self.trainer.storage.history("val_union").total
