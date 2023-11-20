@@ -178,8 +178,16 @@ class NiaFinalDataset(DefaultDataset):
         
         return segment
     
-    def get_split_data_list(self, split):
-        return self.path_provider.get_split_data_list(split)
+    def get_split_data_list(self, split, small_valid_num_samples=None):
+        split_data_list = self.path_provider.get_split_data_list(split)
+        if split == "valid":
+            if small_valid_num_samples is not None:
+                import random
+                nia_random = random.Random(small_valid_num_samples)
+                nia_random.shuffle(split_data_list)
+            split_data_list = split_data_list[:small_valid_num_samples]
+        
+        return split_data_list
     
     def get_data_list(self):
         data_list = []
