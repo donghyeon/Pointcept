@@ -108,9 +108,11 @@ class NiaFinalDataset(DefaultDataset):
         test_cfg=None,
         loop=1,
         ignore_index=-1,
+        small_valid_num_samples=None,
     ):
         self.ignore_index = ignore_index
         self.learning_map = self.get_learning_map(ignore_index)
+        self.small_valid_num_samples = small_valid_num_samples
         self.path_provider = NiaDataPathProvider(
             NiaDataPathExtractor(
                 dataset_dir=data_root,
@@ -181,7 +183,7 @@ class NiaFinalDataset(DefaultDataset):
     def get_split_data_list(self, split, small_valid_num_samples=None):
         split_data_list = self.path_provider.get_split_data_list(split)
         if split == "valid":
-            if small_valid_num_samples is not None:
+            if self.small_valid_num_samples is not None:
                 import random
                 nia_random = random.Random(small_valid_num_samples)
                 nia_random.shuffle(split_data_list)
