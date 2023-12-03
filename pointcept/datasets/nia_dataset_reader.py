@@ -1,46 +1,46 @@
+from typing import Union, List, Tuple
 from pathlib import Path
 
 import polars as pl
 
 
 # TODO: Allow chaining method: This may require huge amount of refactoring
+# TODO: Categorical columns sometimes needs pl.StringCache when comparing strings
+# Currently, elements are compared by string, since it is not that slow for now.
 class NiaDataPathExtractor:
     def __init__(
             self,
-            dataset_dir="/datasets/nia/",
-            pattern=(
+            dataset_dir: str="/datasets/nia/",
+            pattern: str=(
                 r"(?P<type>[^/]+)/"
                 r"(?P<collector>[^/]+)/"
                 r".*?"
                 r"(?P<channel>[^/]+)/"
                 r"(?P<filename>[^/]+)$"
             ),
-            exclude_filenames = [],
         ) -> None:
         # Directory should have a trailing slash
         if not dataset_dir.endswith("/"):
             dataset_dir += "/"
         self.dataset_dir = dataset_dir
-        self.exclude_filenames = exclude_filenames
+        self.pattern = pattern
+
+        self.paths = pl.Series("path", map(str, Path(dataset_dir).rglob("*.*")))
 
         # TODO: match, pair, filter, drop_nulls have to be run on the user-side
         self.matched_df = self.match(dataset_dir + pattern)
         self.paired_df = self.pair()
-        self.df = self.paired_df.drop_nulls()
     
-    @property
-    def paths(self) -> pl.Series:
-        return pl.Series("path", map(str, Path(self.dataset_dir).rglob("*.*")))
-    
-    def match(self, pattern: str) -> pl.DataFrame:
+    def match(self, pattern: Union[str, None]=None) -> pl.DataFrame:
+        if pattern is None:
+            pattern = self.dataset_dir + self.pattern
+        
         # Get all file paths and match subdirectory names
-        paths = self.paths
         matched_df = (
-            paths
+            self.paths
             .str.extract_groups(pattern)
             .struct.unnest()
-            .with_columns(paths)
-            .filter(~pl.col("filename").is_in(self.exclude_filenames))
+            .with_columns(self.paths)
         )
 
         # Get stem and extension from filename
@@ -58,48 +58,47 @@ class NiaDataPathExtractor:
         matched_df = matched_df.with_columns(
             pl.col("stem").str.extract(r"([A-Z]+)", 1).alias("sensor"),
             pl.col("stem").str.extract_all(r"[A-Z]\d{2}").list.to_struct(
-                fields=["code_1", "code_2"],
+                fields=["scene", "road"],
             ).alias("scenario_codes"),
             pl.col("stem").str.extract(f"({'|'.join(timeslot_values)})").alias("timeslot"),
             pl.col("stem").str.extract(f"({'|'.join(weather_values)})").alias("weather"),
             pl.col("stem").str.extract(r"(\d{8})").alias("annotation_id")
         ).unnest("scenario_codes")
+
+        # TODO: match(), pair() have to be run on the user-side
+        self.matched_df = matched_df
         return matched_df
     
+    # TODO: pair method should be refactored to another class or external function
     def pair(self) -> pl.DataFrame:
-        # Group by stem and channel
-        paired_df = self.matched_df.group_by("stem", "channel").agg(
-            pl.all().exclude("filename", "path", "extension").first(),
-            pl.col("path").filter(pl.col("extension") != "json").first().name.prefix("collection_"),
-            pl.col("path").filter(pl.col("extension") == "json").first().name.prefix("annotation_"),
-        )
+        collections_df = self.matched_df.filter(
+            pl.col("extension") != "json",
+        ).rename({"path": "collection_path"})
+        annotations_df = self.matched_df.filter(
+            pl.col("extension") == "json",
+        ).rename({"path": "annotation_path"}).drop("collector")
 
-        # # TODO: Categorical columns sometimes needs pl.StringCache when comparing strings
-        # # Currently, elements are compared by string, since it is not that slow for now.
-        # # Drop nulls and get all features with complete pairs
-        # categorical_columns = [
-        #     "channel", "volume", "scene",
-        #     "sensor", "code_1", "code_2", "timeslot", "weather",
-        # ]
-        # paired_df = paired_df.drop_nulls().with_columns(
-        #     pl.col(categorical_columns).cast(pl.Categorical).cat.set_ordering("lexical"),
-        # )
+        paired_df = annotations_df.join(
+            collections_df.select(pl.col("stem", "collector", "collection_path")),
+            on="stem",
+        ).select([
+            "stem",
+            "collector", "channel", "sensor", "scene", "road", "timeslot", "weather", "annotation_id",
+            "collection_path", "annotation_path",
+        ]).sort("stem")
 
+        # TODO: match, pair, filter, drop_nulls have to be run on the user-side
+        self.paired_df = paired_df
         return paired_df
-    
-    def filter_channels(self, channels: list[str]) -> pl.DataFrame:
-        return self.df.filter(
-            pl.col("channel").is_in(channels),
-        )
 
 
 class DataFrameSplitter:
     def __init__(
             self,
-            groups=["channel"],
-            splits=["train", "valid", "test"],
-            ratios=[8, 1, 1],
-            seed=231111,
+            groups: List[str]=["collector", "scene", "road", "timeslot", "weather"],
+            splits: List[str]=["train", "valid", "test"],
+            ratios: List[float]=[8, 1, 1],
+            seed: Union[int, None]=231111,
         ) -> None:
 
         self.groups = groups
@@ -107,67 +106,60 @@ class DataFrameSplitter:
         self.ratios = ratios
         self.seed = seed
 
-    # TODO: Looks ugly. Vectorize operators as much as possible.
     # TODO: This breaks the original ordering. Returned DataFrame is automatically sorted.
-    # TODO: Needs "stem" to sort. Check whether sorting by groups[0] gives consistent results.
-    def split(self, df: pl.DataFrame, random=False) -> pl.DataFrame:
+    def split(self, df: pl.DataFrame, random: bool=False) -> pl.DataFrame:
         groups = self.groups
-        splits = self.splits
-        ratios = self.ratios
         seed = self.seed
 
-        split_ratio_df = pl.DataFrame([
+        df_with_split = (
+            df
+            .group_by([*groups, "annotation_id"], maintain_order=True)  # Group by collections gathered together
+            .all()  # Zip groups where each group has 6 collections from 6 channels
+            .select("stem", "collector", "channel",
+                    "sensor", "scene", "road", "timeslot", "weather", "annotation_id",
+                    "collection_path", "annotation_path")  # Reorder columns
+            .with_row_count("index")  # Add group index
+            .group_by(groups, maintain_order=True)  # Group by same scenarios
+            .map_groups(lambda x: x.with_columns(
+                self.assign_split(len(x), random=random, seed=seed + x.get_column("index").min()),
+            ))  # Each Scenario will be splited into [train, valid, test] sets with ratio [8, 1, 1]
+            .explode("stem", "channel", "sensor", "collection_path", "annotation_path")  # unzip groups
+        )
+        return df_with_split
+    
+    def random_split(self, df: pl.DataFrame) -> pl.DataFrame:
+        return self.split(df, random=True)
+    
+    def assign_split(
+            self,
+            num_samples: int,
+            random: bool=False,
+            seed: int=231111,
+        ) -> pl.Series:
+        splits = self.splits
+        ratios = self.ratios
+            
+        split_info_df = pl.DataFrame([
             pl.Series("split", splits),
             pl.Series("ratio", ratios),
         ]).with_columns(
             (pl.col("ratio") / pl.col("ratio").sum()).alias("proportion")
-        )
+        ).with_columns(
+            (pl.col("ratio").cum_sum() / pl.col("ratio").sum() * num_samples).round().cast(pl.Int64).alias("end_index"),
+        ).with_columns(
+            pl.col("end_index").shift(1, fill_value=0).alias("start_index"),
+        ).with_columns(
+            (pl.col("end_index") - pl.col("start_index")).alias("length")
+        ).select("split", "ratio", "proportion", "start_index", "end_index", "length")
 
-        split_dfs = []
-        for group, grouped_df in df.sort("stem").with_row_count("index").group_by(groups, maintain_order=True):
-            num_samples = len(grouped_df)
-            if num_samples == 0:
-                continue
+        split_series = split_info_df.with_columns(
+            pl.int_ranges("start_index", "end_index"),
+        ).explode("int_range").drop_nulls().get_column("split")
 
-            slice_indices_df = split_ratio_df.with_columns(
-                (pl.col("proportion").cumsum() * num_samples).round().cast(pl.Int64).alias("end_index"),
-            ).with_columns(
-                pl.col("end_index").shift(1, fill_value=0).alias("start_index"),
-            ).with_columns(
-                (pl.col("end_index") - pl.col("start_index")).alias("length")
-            )
+        if random is True:
+            split_series = split_series.shuffle(seed)
 
-            split_df = grouped_df.with_row_count("group_index").select(
-                pl.col("index"),
-                pl.col("group_index"),
-                pl.lit(None).alias("split"),
-            )
-
-            for split, end_index in slice_indices_df.rows_by_key(("split", "end_index")):
-                split_df = split_df.with_columns(
-                    pl.when((pl.col("group_index") < end_index) & pl.col("split").is_null())
-                    .then(pl.lit(split))
-                    .otherwise(pl.col("split"))
-                    .alias("split")
-                )
-            
-            split_series = split_df.get_column("split")
-            if random:
-                seed += 1
-                split_series = split_series.sample(num_samples, shuffle=True, seed=seed)
-            
-            split_dfs.append(
-                split_df.select(
-                    pl.col("index"),
-                    split_series.alias("split"),
-                ),
-            )
-        
-        split_series = pl.concat(split_dfs).sort("index").get_column("split")
-        return df.sort("stem").with_columns(split_series)
-    
-    def random_split(self, df: pl.DataFrame) -> pl.DataFrame:
-        return self.split(df, random=True)
+        return split_series
 
 
 class NiaDataPathProvider:
@@ -175,19 +167,39 @@ class NiaDataPathProvider:
             self,
             reader: NiaDataPathExtractor,
             splitter: DataFrameSplitter,
-            channels: list[str],
+            exclude_filenames: List[str]=[],
         ) -> None:
         self.reader = reader
         self.splitter = splitter
-        self.channels = channels
+        self.exclude_filenames = exclude_filenames
+        
+        self.nia_df = self.splitter.random_split(self.reader.paired_df)
     
-    def get_split_data_list(self, split: str) -> list[str]:
-        df = self.reader.filter_channels(self.channels)
-        df = self.splitter.random_split(df)
+    def get_split_data_list(
+            self,
+            channels: Union[str, List[str]],
+            splits: Union[str, List[str]],
+        ) -> List[Tuple[str, str]]:
 
-        df = df.filter(pl.col("split") == split)
+        df = self.nia_df
+        df = self.exclude_files(df)
 
-        return df.select(
+        if type(channels) is str:
+            channels = [channels]
+        
+        if type(splits) is str:
+            splits = [splits]
+
+        return df.filter(
+            pl.col("channel").is_in(channels),
+            pl.col("split").is_in(splits),
+        ).select(
             "collection_path",
             "annotation_path",
         ).rows()
+
+    def exclude_files(self, df: pl.DataFrame) -> pl.DataFrame:
+        return df.filter(
+            ~pl.col("collection_path").str.extract(r"[^/]+$", 0).is_in(self.exclude_filenames),
+            ~pl.col("annotation_path").str.extract(r"[^/]+$", 0).is_in(self.exclude_filenames),
+        )

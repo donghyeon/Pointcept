@@ -122,16 +122,15 @@ class NiaFinalDataset(DefaultDataset):
                     r".*?"
                     r"(?P<channel>[^/]+)/"
                     r"(?P<filename>[^/]+)$"
-                ),
-                exclude_filenames=["LV_B03_R01_night_clear_01091948.pcd"],  # File corrupted
+                ),                
             ),
-            DataFrameSplitter(
-                groups=["channel", "collector", "code_1", "code_2", "timeslot", "weather"],
+            splitter = DataFrameSplitter(
+                groups=["collector", "scene", "road", "timeslot", "weather"],
                 splits=["train", "valid", "test"],
                 ratios=[8, 1, 1],
                 seed=231111,
             ),
-            channels=["lidar"],
+            # exclude_filenames=["LV_B03_R01_night_clear_01091948.pcd"],  # File corrupted
         )
         super().__init__(
             split=split,
@@ -181,13 +180,16 @@ class NiaFinalDataset(DefaultDataset):
         return segment
     
     def get_split_data_list(self, split):
-        split_data_list = self.path_provider.get_split_data_list(split)
+        split_data_list = self.path_provider.get_split_data_list(
+            channels="lidar",
+            splits=split,
+        )
         if split == "valid":
             if self.small_valid_num_samples is not None:
                 import random
                 nia_random = random.Random(self.small_valid_num_samples)
                 nia_random.shuffle(split_data_list)
-            split_data_list = split_data_list[:self.small_valid_num_samples]
+                split_data_list = split_data_list[:self.small_valid_num_samples]
         
         return split_data_list
     
