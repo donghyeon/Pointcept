@@ -12,6 +12,7 @@ class NiaDataPathExtractor:
             self,
             dataset_dir: str="/datasets/nia/",
             pattern: str=(
+                r"(?P<split>[^/]+)/"
                 r"(?P<type>[^/]+)/"
                 r"(?P<collector>[^/]+)/"
                 r".*?"
@@ -72,17 +73,28 @@ class NiaDataPathExtractor:
     # TODO: pair method should be refactored to another class or external function
     def pair(self) -> pl.DataFrame:
         collections_df = self.matched_df.filter(
-            pl.col("extension") != "json",
+            pl.col("extension").is_in(["pcd", "png"]),
+            pl.col("split").is_in(["1.Training", "2.Validation", "3.Test"]),
+            pl.col("type") == "1.원천데이터",
+        ).with_columns(
+            pl.col("split").replace({
+                "1.Training": "train",
+                "2.Validation": "valid",
+                "3.Test": "test",
+            }),
         ).rename({"path": "collection_path"})
+
         annotations_df = self.matched_df.filter(
             pl.col("extension") == "json",
-        ).rename({"path": "annotation_path"}).drop("collector")
+            pl.col("split").is_in(["1.Training", "2.Validation", "3.Test", "6.서브라벨링"]),
+            pl.col("type") == "2.라벨링데이터",
+        ).rename({"path": "annotation_path"}).drop("split", "collector")
 
         paired_df = annotations_df.join(
-            collections_df.select(pl.col("stem", "collector", "collection_path")),
+            collections_df.select(pl.col("split", "stem", "collector", "collection_path")),
             on="stem",
         ).select([
-            "stem",
+            "split", "stem",
             "collector", "channel", "sensor", "scene", "road", "timeslot", "weather", "annotation_id",
             "collection_path", "annotation_path",
         ]).sort("stem")
@@ -166,14 +178,17 @@ class NiaDataPathProvider:
     def __init__(
             self,
             reader: NiaDataPathExtractor,
-            splitter: DataFrameSplitter,
+            splitter: Union[DataFrameSplitter, None]=None,
             exclude_filenames: List[str]=[],
         ) -> None:
         self.reader = reader
         self.splitter = splitter
         self.exclude_filenames = exclude_filenames
         
-        self.nia_df = self.splitter.random_split(self.reader.paired_df)
+        if self.splitter:
+            self.nia_df = self.splitter.random_split(self.reader.paired_df)
+        else:
+            self.nia_df = self.reader.paired_df
     
     def get_split_data_list(
             self,
