@@ -14,14 +14,14 @@ RUN pip install --no-index torch-cluster torch-scatter torch-sparse -f https://d
 
 RUN pip install torch-geometric spconv-cu117
 
-COPY . /home/Pointcept/
+COPY . /root/Pointcept/
 
-WORKDIR /home/Pointcept/libs/pointops
+WORKDIR /root/Pointcept/libs/pointops
 
 ARG TORCH_CUDA_ARCH_LIST=8.6
 
 RUN python setup.py install
 
-WORKDIR /home/Pointcept
+WORKDIR /root/Pointcept
 
 CMD /bin/bash
