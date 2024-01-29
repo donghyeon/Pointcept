@@ -114,23 +114,7 @@ class NiaFinalDataset(DefaultDataset):
         self.learning_map = self.get_learning_map(ignore_index)
         self.small_valid_num_samples = small_valid_num_samples
         self.path_provider = NiaDataPathProvider(
-            NiaDataPathExtractor(
-                dataset_dir=data_root,
-                pattern=(
-                    r"(?P<type>[^/]+)/"
-                    r"(?P<collector>[^/]+)/"
-                    r".*?"
-                    r"(?P<channel>[^/]+)/"
-                    r"(?P<filename>[^/]+)$"
-                ),                
-            ),
-            splitter = DataFrameSplitter(
-                groups=["collector", "scene", "road", "timeslot", "weather"],
-                splits=["train", "valid", "test"],
-                ratios=[8, 1, 1],
-                seed=231111,
-            ),
-            # exclude_filenames=["LV_B03_R01_night_clear_01091948.pcd"],  # File corrupted
+            NiaDataPathExtractor(dataset_dir=data_root),
         )
         super().__init__(
             split=split,
